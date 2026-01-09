@@ -2,11 +2,12 @@ import fileinput
 import sys
 import re
 
-if len(sys.argv) < 2:
-    print("Please provide a new version string!")
-    exit
+# if len(sys.argv) < 2:
+#     print("Please provide a new version string!")
+#     exit
 
-newVersion = sys.argv[1]
+# newVersion = sys.argv[1]
+newVersion = "5.00.01"
 shortVersion = re.match('^(\\d+\\.\\d+).', newVersion).group(1)
 print("New version: {0}".format(newVersion))
 

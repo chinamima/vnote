@@ -108,7 +108,10 @@ const QIcon &Notebook::getIcon() const { return m_icon; }
 
 void Notebook::setIcon(const QIcon &p_icon) { m_icon = p_icon; }
 
-const QString &Notebook::getImageFolder() const { return m_imageFolder; }
+const QString &Notebook::getImageFolder() const { 
+  // return m_imageFolder; 
+  return PathUtils::concatenateFilePath(m_imageFolder, m_name);
+}
 
 const QString &Notebook::getAttachmentFolder() const { return m_attachmentFolder; }
 
