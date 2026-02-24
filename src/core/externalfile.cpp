@@ -34,6 +34,7 @@ QString ExternalFile::fetchImageFolderPath() {
   if (folderName.isEmpty()) {
     folderName = PathUtils::fileName(getContentPath());
   }
+  folderName += QStringLiteral("_assets");
 
   auto pa = PathUtils::concatenateFilePath(getResourcePath(), folderName);
   pa = PathUtils::concatenateFilePath(pa, QStringLiteral("vx_images"));

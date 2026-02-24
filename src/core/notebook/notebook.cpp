@@ -54,6 +54,20 @@ Notebook::Notebook(const NotebookParameters &p_paras, QObject *p_parent)
   }
   if (m_attachmentFolder.isEmpty()) {
     m_attachmentFolder = c_defaultAttachmentFolder;
+  } else {
+    m_attachmentFolder = PathUtils::cleanPath(m_attachmentFolder);
+
+    // Normalize legacy attachment folder name.
+    const auto legacyAttachmentRoot = QStringLiteral("_v_attachments");
+    if (m_attachmentFolder.toLower() == legacyAttachmentRoot) {
+      m_attachmentFolder = c_defaultAttachmentFolder;
+    } else {
+      const auto legacyAttachmentPrefix = legacyAttachmentRoot + QLatin1Char('/');
+      if (m_attachmentFolder.toLower().startsWith(legacyAttachmentPrefix)) {
+        const auto subPath = m_attachmentFolder.mid(legacyAttachmentPrefix.size());
+        m_attachmentFolder = PathUtils::concatenateFilePath(c_defaultAttachmentFolder, subPath);
+      }
+    }
   }
   if (m_recycleBinFolder.isEmpty()) {
     m_recycleBinFolder = c_defaultRecycleBinFolder;
