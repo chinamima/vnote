@@ -32,6 +32,25 @@ Notebook::Notebook(const NotebookParameters &p_paras, QObject *p_parent)
       m_configMgr(p_paras.m_notebookConfigMgr) {
   if (m_imageFolder.isEmpty()) {
     m_imageFolder = c_defaultImageFolder;
+  } else {
+    m_imageFolder = PathUtils::cleanPath(m_imageFolder);
+
+    // Fix legacy value that persisted "vx_images/<notebook_name>" repeatedly.
+    const auto legacyPrefix = c_defaultImageFolder + QLatin1Char('/');
+    if (m_imageFolder.startsWith(legacyPrefix)) {
+      const auto parts = m_imageFolder.mid(legacyPrefix.size()).split('/', Qt::SkipEmptyParts);
+      bool legacyFormat = !parts.isEmpty();
+      for (const auto &part : parts) {
+        if (part != m_name) {
+          legacyFormat = false;
+          break;
+        }
+      }
+
+      if (legacyFormat) {
+        m_imageFolder = c_defaultImageFolder;
+      }
+    }
   }
   if (m_attachmentFolder.isEmpty()) {
     m_attachmentFolder = c_defaultAttachmentFolder;
@@ -109,7 +128,7 @@ const QIcon &Notebook::getIcon() const { return m_icon; }
 void Notebook::setIcon(const QIcon &p_icon) { m_icon = p_icon; }
 
 QString Notebook::getImageFolder() const {
-  return PathUtils::concatenateFilePath(m_imageFolder, m_name);
+  return m_imageFolder;
 }
 
 const QString &Notebook::getAttachmentFolder() const { return m_attachmentFolder; }

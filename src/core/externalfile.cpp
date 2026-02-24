@@ -1,5 +1,7 @@
 #include "externalfile.h"
 
+#include <QFileInfo>
+
 #include <utils/fileutils.h>
 #include <utils/pathutils.h>
 
@@ -28,7 +30,13 @@ IFileWithImage *ExternalFile::getImageInterface() { return this; }
 Node *ExternalFile::getNode() const { return nullptr; }
 
 QString ExternalFile::fetchImageFolderPath() {
-  auto pa = PathUtils::concatenateFilePath(getResourcePath(), QStringLiteral("vx_images"));
+  auto folderName = QFileInfo(getContentPath()).completeBaseName();
+  if (folderName.isEmpty()) {
+    folderName = PathUtils::fileName(getContentPath());
+  }
+
+  auto pa = PathUtils::concatenateFilePath(getResourcePath(), folderName);
+  pa = PathUtils::concatenateFilePath(pa, QStringLiteral("vx_images"));
   QDir().mkpath(pa);
   return pa;
 }

@@ -1,10 +1,12 @@
 #include "vxnotebookconfigmgr.h"
 
 #include <QDebug>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QStringList>
 
 #include <core/configmgr.h>
 #include <core/coreconfig.h>
@@ -35,6 +37,121 @@ const QString VXNotebookConfigMgr::c_nodeConfigName = "vx.json";
 bool VXNotebookConfigMgr::s_initialized = false;
 
 QVector<QRegExp> VXNotebookConfigMgr::s_externalNodeExcludePatterns;
+
+static QString fetchNodeResourceFolderPath(const QString &p_nodePath) {
+  auto nodeFolderName = QFileInfo(p_nodePath).completeBaseName();
+  if (nodeFolderName.isEmpty()) {
+    nodeFolderName = PathUtils::fileName(p_nodePath);
+  }
+
+  return PathUtils::concatenateFilePath(PathUtils::parentDirPath(p_nodePath), nodeFolderName);
+}
+
+static bool containsCaseInsensitive(const QStringList &p_list, const QString &p_item) {
+  for (const auto &it : p_list) {
+    if (it.toLower() == p_item.toLower()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static QStringList fetchAttachmentRootNames(const Notebook *p_notebook) {
+  QStringList names;
+  names << p_notebook->getAttachmentFolder();
+
+  if (!containsCaseInsensitive(names, QStringLiteral("vx_attachments"))) {
+    names << QStringLiteral("vx_attachments");
+  }
+  if (!containsCaseInsensitive(names, QStringLiteral("_v_attachments"))) {
+    names << QStringLiteral("_v_attachments");
+  }
+
+  return names;
+}
+
+static QStringList fetchLegacyImageFolderCandidates(const Notebook *p_notebook,
+                                                    const QString &p_nodeParentPath) {
+  QStringList folders;
+  folders << p_notebook->getImageFolder();
+  folders << PathUtils::concatenateFilePath(p_notebook->getImageFolder(), p_notebook->getName());
+  folders << QStringLiteral("vx_images");
+  folders << QStringLiteral("_v_images");
+  folders << QStringLiteral("vx_images/%1").arg(p_notebook->getName());
+  folders << QStringLiteral("_v_images/%1").arg(p_notebook->getName());
+
+  QStringList paths;
+  for (const auto &folder : folders) {
+    auto path = PathUtils::concatenateFilePath(p_nodeParentPath, folder);
+    if (!containsCaseInsensitive(paths, path)) {
+      paths << path;
+    }
+  }
+
+  return paths;
+}
+
+static void removeDirIfExists(INotebookBackend *p_backend, const QString &p_dirPath) {
+  if (p_backend->existsDir(p_dirPath)) {
+    p_backend->removeDir(p_dirPath);
+  }
+}
+
+// Try removing empty folders bottom-up from @p_dirPath to the direct child of @p_stopDirPath.
+static void removeEmptyDirChain(INotebookBackend *p_backend, const QString &p_dirPath,
+                                const QString &p_stopDirPath) {
+  auto dirPath = PathUtils::cleanPath(p_dirPath);
+  const auto stopDirPath = PathUtils::cleanPath(p_stopDirPath);
+
+  while (!dirPath.isEmpty() && PathUtils::pathContains(stopDirPath, dirPath) &&
+         !PathUtils::areSamePaths(dirPath, stopDirPath)) {
+    if (p_backend->existsDir(dirPath)) {
+      p_backend->removeEmptyDir(dirPath);
+      if (!p_backend->removeDirIfEmpty(dirPath)) {
+        break;
+      }
+    }
+
+    auto parentPath = PathUtils::parentDirPath(dirPath);
+    if (PathUtils::areSamePaths(parentPath, dirPath)) {
+      break;
+    }
+    dirPath = parentPath;
+  }
+}
+
+static bool isResourceFolderOfNode(const Node *p_node, const QString &p_folderName) {
+  const auto folderPath = PathUtils::concatenateFilePath(p_node->fetchPath(), p_folderName);
+  auto backend = p_node->getBackend();
+  if (!backend->existsDir(folderPath)) {
+    return false;
+  }
+
+  auto notebook = p_node->getNotebook();
+  if (!backend->childExistsCaseInsensitive(folderPath, notebook->getImageFolder()) &&
+      !backend->childExistsCaseInsensitive(folderPath, notebook->getAttachmentFolder()) &&
+      !backend->childExistsCaseInsensitive(folderPath, QStringLiteral("vx_images")) &&
+      !backend->childExistsCaseInsensitive(folderPath, QStringLiteral("vx_attachments")) &&
+      !backend->childExistsCaseInsensitive(folderPath, QStringLiteral("_v_images")) &&
+      !backend->childExistsCaseInsensitive(folderPath, QStringLiteral("_v_attachments"))) {
+    return false;
+  }
+
+  const auto folderName = p_folderName.toLower();
+  const auto &children = p_node->getChildrenRef();
+  for (const auto &child : children) {
+    if (!child->hasContent()) {
+      continue;
+    }
+
+    if (QFileInfo(child->getName()).completeBaseName().toLower() == folderName) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 VXNotebookConfigMgr::VXNotebookConfigMgr(const QSharedPointer<INotebookBackend> &p_backend,
                                          QObject *p_parent)
@@ -622,6 +739,10 @@ void VXNotebookConfigMgr::removeNode(const QSharedPointer<Node> &p_node, bool p_
 void VXNotebookConfigMgr::removeNode(const QSharedPointer<Node> &p_node, bool p_force,
                                      bool p_configOnly, bool p_updateDatabase) {
   if (!p_configOnly && p_node->exists()) {
+    if (p_node->isContainer() && !p_node->isLoaded()) {
+      p_node->load();
+    }
+
     // Remove all children.
     auto children = p_node->getChildren();
     for (const auto &childNode : children) {
@@ -650,17 +771,49 @@ void VXNotebookConfigMgr::removeNode(const QSharedPointer<Node> &p_node, bool p_
 void VXNotebookConfigMgr::removeFilesOfNode(Node *p_node, bool p_force) {
   Q_ASSERT(p_node->getNotebook() == getNotebook());
   if (!p_node->isContainer()) {
+    auto backend = getBackend();
+    const auto nodePath = p_node->fetchAbsolutePath();
+    const auto nodeParentPath = PathUtils::parentDirPath(nodePath);
+    const auto nodeResourceRootPath = fetchNodeResourceFolderPath(nodePath);
+    const auto imageResourceFolderPath =
+        PathUtils::concatenateFilePath(nodeResourceRootPath, getNotebook()->getImageFolder());
+    const auto attachmentResourceFolderPath =
+        PathUtils::concatenateFilePath(nodeResourceRootPath, getNotebook()->getAttachmentFolder());
+
     // Delete attachment.
     if (!p_node->getAttachmentFolder().isEmpty()) {
-      getBackend()->removeDir(p_node->fetchAttachmentFolderPath());
+      removeDirIfExists(backend.data(), p_node->fetchAttachmentFolderPath());
+
+      // Compatibility: remove legacy notebook-level attachment folders as well.
+      const auto attachmentFolder = p_node->getAttachmentFolder();
+      const auto attachmentRootNames = fetchAttachmentRootNames(getNotebook());
+      for (const auto &rootName : attachmentRootNames) {
+        auto rootPath = PathUtils::concatenateFilePath(nodeParentPath, rootName);
+        auto legacyAttachmentPath = PathUtils::concatenateFilePath(rootPath, attachmentFolder);
+        removeDirIfExists(backend.data(), legacyAttachmentPath);
+        removeEmptyDirChain(backend.data(), rootPath, nodeParentPath);
+      }
     }
 
     // Delete media files fetched from content.
     ContentMediaUtils::removeMediaFiles(p_node);
 
+    // Remove dedicated resource folders for this note.
+    removeDirIfExists(backend.data(), imageResourceFolderPath);
+    removeDirIfExists(backend.data(), attachmentResourceFolderPath);
+    removeEmptyDirChain(backend.data(), imageResourceFolderPath, nodeResourceRootPath);
+    removeEmptyDirChain(backend.data(), attachmentResourceFolderPath, nodeResourceRootPath);
+    removeEmptyDirChain(backend.data(), nodeResourceRootPath, nodeParentPath);
+
+    // Compatibility: old image folder could be shared, only prune it when empty.
+    const auto legacyImageFolders = fetchLegacyImageFolderCandidates(getNotebook(), nodeParentPath);
+    for (const auto &folderPath : legacyImageFolders) {
+      removeEmptyDirChain(backend.data(), folderPath, nodeParentPath);
+    }
+
     // Delete node file itself.
     auto filePath = p_node->fetchPath();
-    getBackend()->removeFile(filePath);
+    backend->removeFile(filePath);
   } else {
     Q_ASSERT(p_node->getChildrenCount() == 0);
     // Delete node config file and the dir if it is empty.
@@ -690,6 +843,10 @@ void VXNotebookConfigMgr::removeNodeToFolder(const QSharedPointer<Node> &p_node,
 
 void VXNotebookConfigMgr::removeFolderNodeToFolder(const QSharedPointer<Node> &p_node,
                                                    const QString &p_destFolder) {
+  if (!p_node->isLoaded()) {
+    p_node->load();
+  }
+
   auto destFolderPath = PathUtils::concatenateFilePath(p_destFolder, p_node->getName());
   destFolderPath = getBackend()->renameIfExistsCaseInsensitive(destFolderPath);
 
@@ -743,8 +900,9 @@ void VXNotebookConfigMgr::copyFilesOfFileNode(const QSharedPointer<Node> &p_node
 }
 
 QString VXNotebookConfigMgr::fetchNodeImageFolderPath(Node *p_node) {
-  auto pa = PathUtils::concatenateFilePath(PathUtils::parentDirPath(p_node->fetchAbsolutePath()),
-                                           getNotebook()->getImageFolder());
+  auto pa = fetchNodeResourceFolderPath(p_node->fetchAbsolutePath());
+  pa = PathUtils::concatenateFilePath(pa, getNotebook()->getImageFolder());
+
   // Do not make the folder when it is a folder node request.
   if (p_node->hasContent()) {
     getBackend()->makePath(pa);
@@ -753,8 +911,9 @@ QString VXNotebookConfigMgr::fetchNodeImageFolderPath(Node *p_node) {
 }
 
 QString VXNotebookConfigMgr::fetchNodeAttachmentFolderPath(Node *p_node) {
-  auto notebookFolder = PathUtils::concatenateFilePath(
-      PathUtils::parentDirPath(p_node->fetchAbsolutePath()), getNotebook()->getAttachmentFolder());
+  auto notebookFolder = PathUtils::concatenateFilePath(fetchNodeResourceFolderPath(
+                                                            p_node->fetchAbsolutePath()),
+                                                        getNotebook()->getAttachmentFolder());
   if (p_node->hasContent()) {
     auto nodeFolder = p_node->getAttachmentFolder();
     if (nodeFolder.isEmpty()) {
@@ -765,7 +924,24 @@ QString VXNotebookConfigMgr::fetchNodeAttachmentFolderPath(Node *p_node) {
       getBackend()->makePath(folderPath);
       return folderPath;
     } else {
-      return PathUtils::concatenateFilePath(notebookFolder, nodeFolder);
+      auto folderPath = PathUtils::concatenateFilePath(notebookFolder, nodeFolder);
+      if (getBackend()->existsDir(folderPath)) {
+        return folderPath;
+      }
+
+      // Compatibility: try legacy notebook-level attachment folder.
+      const auto nodeParentPath = PathUtils::parentDirPath(p_node->fetchAbsolutePath());
+      const auto rootNames = fetchAttachmentRootNames(getNotebook());
+      for (const auto &rootName : rootNames) {
+        auto legacyPath =
+            PathUtils::concatenateFilePath(PathUtils::concatenateFilePath(nodeParentPath, rootName),
+                                           nodeFolder);
+        if (getBackend()->existsDir(legacyPath)) {
+          return legacyPath;
+        }
+      }
+
+      return folderPath;
     }
   } else {
     // Do not make the folder when it is a folder node request.
@@ -775,7 +951,7 @@ QString VXNotebookConfigMgr::fetchNodeAttachmentFolderPath(Node *p_node) {
 
 QString VXNotebookConfigMgr::fetchNodeAttachmentFolder(const QString &p_nodePath,
                                                        QString &p_folderName) {
-  auto notebookFolder = PathUtils::concatenateFilePath(PathUtils::parentDirPath(p_nodePath),
+  auto notebookFolder = PathUtils::concatenateFilePath(fetchNodeResourceFolderPath(p_nodePath),
                                                        getNotebook()->getAttachmentFolder());
   if (p_folderName.isEmpty()) {
     p_folderName = FileUtils::generateUniqueFileName(notebookFolder, QString(), QString());
@@ -899,6 +1075,10 @@ VXNotebookConfigMgr::fetchExternalChildren(Node *p_node) const {
     const auto folders = dir.entryList(QDir::Dirs | QDir::NoSymLinks | QDir::NoDotAndDotDot);
     for (const auto &folder : folders) {
       if (isBuiltInFolder(p_node, folder)) {
+        continue;
+      }
+
+      if (isResourceFolderOfNode(p_node, folder)) {
         continue;
       }
 
