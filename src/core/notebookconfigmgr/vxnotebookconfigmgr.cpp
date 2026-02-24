@@ -236,6 +236,10 @@ static bool isResourceFolderOfNode(const Node *p_node, const QString &p_folderNa
   return false;
 }
 
+static bool isAssetsFolder(const QString &p_folderName) {
+  return p_folderName.endsWith(QStringLiteral("_assets"), Qt::CaseInsensitive);
+}
+
 VXNotebookConfigMgr::VXNotebookConfigMgr(const QSharedPointer<INotebookBackend> &p_backend,
                                          QObject *p_parent)
     : BundleNotebookConfigMgr(p_backend, p_parent) {
@@ -1207,6 +1211,10 @@ VXNotebookConfigMgr::fetchExternalChildren(Node *p_node) const {
   {
     const auto folders = dir.entryList(QDir::Dirs | QDir::NoSymLinks | QDir::NoDotAndDotDot);
     for (const auto &folder : folders) {
+      if (isAssetsFolder(folder)) {
+        continue;
+      }
+
       if (isBuiltInFolder(p_node, folder)) {
         continue;
       }
