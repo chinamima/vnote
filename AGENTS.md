@@ -9,6 +9,7 @@ After cloning the repository, run the init script to set up your development env
 ## Build/Lint/Test Commands
 
 * **Build**: `mkdir build && cd build && cmake .. && cmake --build . --config Release`
+* **Package (macOS DMG)**: `cmake --build . --target pack --config Release`
 * **Debug Build**: `cmake .. -DCMAKE_BUILD_TYPE=Debug && cmake --build . --config Debug`
 * **Run Tests**: Uncomment `add_subdirectory(tests)` in root CMakeLists.txt, rebuild, then `ctest`
 * **Run Single Test**: `ctest -R test_task` (use test name pattern matching)

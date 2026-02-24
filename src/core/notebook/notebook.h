@@ -57,7 +57,7 @@ public:
   const QIcon &getIcon() const;
   void setIcon(const QIcon &p_icon);
 
-  const QString &getImageFolder() const;
+  QString getImageFolder() const;
 
   const QString &getAttachmentFolder() const;
 

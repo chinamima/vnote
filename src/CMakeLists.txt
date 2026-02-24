@@ -132,6 +132,13 @@ if (WIN32)
 elseif(APPLE)
     set(CMAKE_MACOSX_RPATH ON)
 
+    add_custom_command(TARGET vnote POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vnote>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${VX_EXTRA_RESOURCE_FILES_RCC} "$<TARGET_FILE_DIR:vnote>/../Resources"
+        VERBATIM
+    )
+    
     # TODO: declare install for macOS if necessary. For packing, we will manually copy files into
     # the src/vnote.app bundle.
 
