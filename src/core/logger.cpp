@@ -1,6 +1,7 @@
 #include "logger.h"
 
 #include "configmgr.h"
+#include <QDateTime>
 #include <QFile>
 #include <QTextStream>
 
@@ -80,11 +81,12 @@ void Logger::log(QtMsgType p_type, const QMessageLogContext &p_context, const QS
   }
 
   QString fileName = getFileName(p_context.file);
+  QString timeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz ");
 
   if (!s_logToStderr) {
     QTextStream stream(&s_file);
-    stream << header << (QStringLiteral("(%1:%2) ").arg(fileName).arg(p_context.line)) << localMsg
-           << "\n";
+    stream << timeStr << header << (QStringLiteral("(%1:%2) ").arg(fileName).arg(p_context.line))
+           << localMsg << "\n";
 
     if (p_type == QtFatalMsg) {
       s_file.close();
@@ -93,26 +95,28 @@ void Logger::log(QtMsgType p_type, const QMessageLogContext &p_context, const QS
   } else {
     std::string fileStr = fileName.toStdString();
     const char *file = fileStr.c_str();
+    std::string timeStrStd = timeStr.toStdString();
+    const char *time = timeStrStd.c_str();
 
     switch (p_type) {
     case QtDebugMsg:
-      fprintf(stderr, "%s(%s:%u) %s\n", header.toStdString().c_str(), file, p_context.line,
+      fprintf(stderr, "%s%s(%s:%u) %s\n", time, header.toStdString().c_str(), file, p_context.line,
               localMsg.constData());
       break;
     case QtInfoMsg:
-      fprintf(stderr, "%s(%s:%u) %s\n", header.toStdString().c_str(), file, p_context.line,
+      fprintf(stderr, "%s%s(%s:%u) %s\n", time, header.toStdString().c_str(), file, p_context.line,
               localMsg.constData());
       break;
     case QtWarningMsg:
-      fprintf(stderr, "%s(%s:%u) %s\n", header.toStdString().c_str(), file, p_context.line,
+      fprintf(stderr, "%s%s(%s:%u) %s\n", time, header.toStdString().c_str(), file, p_context.line,
               localMsg.constData());
       break;
     case QtCriticalMsg:
-      fprintf(stderr, "%s(%s:%u) %s\n", header.toStdString().c_str(), file, p_context.line,
+      fprintf(stderr, "%s%s(%s:%u) %s\n", time, header.toStdString().c_str(), file, p_context.line,
               localMsg.constData());
       break;
     case QtFatalMsg:
-      fprintf(stderr, "%s(%s:%u) %s\n", header.toStdString().c_str(), file, p_context.line,
+      fprintf(stderr, "%s%s(%s:%u) %s\n", time, header.toStdString().c_str(), file, p_context.line,
               localMsg.constData());
       abort();
       break;

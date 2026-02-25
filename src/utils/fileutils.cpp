@@ -1,6 +1,7 @@
 #include "fileutils.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QFile>
 #include <QJsonDocument>
 #include <QMimeDatabase>
@@ -191,6 +192,7 @@ QString FileUtils::renameIfExistsCaseInsensitive(const QString &p_path) {
 }
 
 void FileUtils::removeFile(const QString &p_filePath) {
+  qInfo() << "remove file" << p_filePath;
   Q_ASSERT(!QFileInfo::exists(p_filePath) || QFileInfo(p_filePath).isFile());
   QFile file(p_filePath);
   if (!file.remove()) {
@@ -211,10 +213,12 @@ bool FileUtils::removeDirIfEmpty(const QString &p_dirPath) {
     return false;
   }
 
+  qInfo() << "remove empty dir" << p_dirPath;
   return true;
 }
 
 void FileUtils::removeDir(const QString &p_dirPath) {
+  qInfo() << "remove dir recursively" << p_dirPath;
   QDir dir(p_dirPath);
   if (!dir.removeRecursively()) {
     Exception::throwOne(
