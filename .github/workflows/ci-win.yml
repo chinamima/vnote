@@ -16,7 +16,7 @@ on:
         default: false
 
 env:
-    VNOTE_VER: 5.00.01
+    VNOTE_VER: 5.00.02
 
 jobs:
   build:

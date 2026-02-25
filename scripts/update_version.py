@@ -7,7 +7,7 @@ import re
 #     exit
 
 # newVersion = sys.argv[1]
-newVersion = "5.00.01"
+newVersion = "5.00.02"
 shortVersion = re.match('^(\\d+\\.\\d+).', newVersion).group(1)
 print("New version: {0}".format(newVersion))
 
