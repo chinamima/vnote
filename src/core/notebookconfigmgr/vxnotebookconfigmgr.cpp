@@ -840,7 +840,8 @@ void VXNotebookConfigMgr::removeNode(const QSharedPointer<Node> &p_node, bool p_
     try {
       removeFilesOfNode(p_node.data(), p_force);
     } catch (Exception &p_e) {
-      qWarning() << "failed to remove files of node" << p_node->fetchPath() << p_e.what();
+      qWarning() << "failed to remove files of node" << p_node->fetchPath() << "absolute path"
+                 << p_node->fetchAbsolutePath() << "reason" << p_e.what();
     }
   }
 
@@ -864,6 +865,10 @@ void VXNotebookConfigMgr::removeFilesOfNode(Node *p_node, bool p_force) {
     const auto resourceFolders = fetchNodeResourceFolderPathCandidates(nodePath);
     const auto imageRootNames = fetchImageRootNames(getNotebook());
     const auto attachmentRootNames = fetchAttachmentRootNames(getNotebook());
+    const auto normalizedResourceRootPath = fetchNodeResourceFolderPath(nodePath);
+    // Check this before deleting marker folders under the resource root.
+    const bool normalizedResourceRootDedicated =
+        isDedicatedResourceRootFolder(backend.data(), getNotebook(), normalizedResourceRootPath);
 
     // Delete attachment.
     if (!p_node->getAttachmentFolder().isEmpty()) {
@@ -895,6 +900,11 @@ void VXNotebookConfigMgr::removeFilesOfNode(Node *p_node, bool p_force) {
 
     // Remove dedicated resource folders for this note.
     for (const auto &resourceFolder : resourceFolders) {
+      if (normalizedResourceRootDedicated &&
+          PathUtils::areSamePaths(resourceFolder, normalizedResourceRootPath)) {
+        continue;
+      }
+
       for (const auto &rootName : imageRootNames) {
         const auto imageResourceFolderPath =
             PathUtils::concatenateFilePath(resourceFolder, rootName);
@@ -913,8 +923,7 @@ void VXNotebookConfigMgr::removeFilesOfNode(Node *p_node, bool p_force) {
     }
 
     // The normalized resource root is dedicated to this note; remove it directly.
-    const auto normalizedResourceRootPath = fetchNodeResourceFolderPath(nodePath);
-    if (isDedicatedResourceRootFolder(backend.data(), getNotebook(), normalizedResourceRootPath)) {
+    if (normalizedResourceRootDedicated) {
       removeDirIfExists(backend.data(), normalizedResourceRootPath);
       removeEmptyDirChain(backend.data(), normalizedResourceRootPath, nodeParentPath);
     }
@@ -1019,77 +1028,28 @@ QString VXNotebookConfigMgr::fetchNodeImageFolderPath(Node *p_node) {
 
 QString VXNotebookConfigMgr::fetchNodeAttachmentFolderPath(Node *p_node) {
   const auto nodePath = p_node->fetchAbsolutePath();
-  const auto nodeParentPath = PathUtils::parentDirPath(nodePath);
   auto notebookFolder = PathUtils::concatenateFilePath(fetchNodeResourceFolderPath(nodePath),
                                                        getNotebook()->getAttachmentFolder());
+
+  // Flat attachment mode: always use <note>_assets/<attachment_root>/ without per-note subfolder.
+  // This enables links like: ./foo_assets/vx_attachments/report.pdf
   if (p_node->hasContent()) {
-    auto nodeFolder = p_node->getAttachmentFolder();
-    if (nodeFolder.isEmpty()) {
-      auto folderPath = fetchNodeAttachmentFolder(nodePath, nodeFolder);
-      p_node->setAttachmentFolder(nodeFolder);
-      saveNode(p_node);
-
-      getBackend()->makePath(folderPath);
-      return folderPath;
-    } else {
-      auto folderPath = PathUtils::concatenateFilePath(notebookFolder, nodeFolder);
-      if (getBackend()->existsDir(folderPath)) {
-        return folderPath;
-      }
-
-      // Compatibility: try legacy notebook-level and legacy resource-root attachment folders.
-      const auto rootNames = fetchAttachmentRootNames(getNotebook());
-      QStringList attachmentRootPaths;
-      for (const auto &rootName : rootNames) {
-        attachmentRootPaths << PathUtils::concatenateFilePath(nodeParentPath, rootName);
-      }
-      const auto resourceFolders = fetchNodeResourceFolderPathCandidates(nodePath);
-      for (const auto &resourceFolder : resourceFolders) {
-        for (const auto &rootName : rootNames) {
-          const auto rootPath = PathUtils::concatenateFilePath(resourceFolder, rootName);
-          if (!containsCaseInsensitive(attachmentRootPaths, rootPath)) {
-            attachmentRootPaths << rootPath;
-          }
-        }
-      }
-
-      for (const auto &attachmentRootPath : attachmentRootPaths) {
-        auto legacyPath = PathUtils::concatenateFilePath(attachmentRootPath, nodeFolder);
-        if (!getBackend()->existsDir(legacyPath)) {
-          continue;
-        }
-
-        if (PathUtils::areSamePaths(legacyPath, folderPath)) {
-          return legacyPath;
-        }
-
-        // Migrate legacy path to the normalized attachment root.
-        try {
-          getBackend()->copyDir(legacyPath, folderPath, true);
-          removeEmptyDirChain(getBackend().data(), attachmentRootPath,
-                              PathUtils::parentDirPath(attachmentRootPath));
-          const auto resourceRootPath = PathUtils::parentDirPath(attachmentRootPath);
-          removeEmptyDirChain(getBackend().data(), resourceRootPath, nodeParentPath);
-          return folderPath;
-        } catch (Exception &e) {
-          qWarning() << "failed to migrate legacy attachment folder" << legacyPath << folderPath
-                     << e.what();
-          return legacyPath;
-        }
-      }
-
-      return folderPath;
-    }
-  } else {
-    // Do not make the folder when it is a folder node request.
-    return notebookFolder;
+    getBackend()->makePath(notebookFolder);
   }
+
+  return notebookFolder;
 }
 
 QString VXNotebookConfigMgr::fetchNodeAttachmentFolder(const QString &p_nodePath,
                                                        QString &p_folderName) {
   auto notebookFolder = PathUtils::concatenateFilePath(fetchNodeResourceFolderPath(p_nodePath),
                                                        getNotebook()->getAttachmentFolder());
+
+  // Flat attachment mode marker.
+  if (p_folderName == QStringLiteral(".")) {
+    return notebookFolder;
+  }
+
   if (p_folderName.isEmpty()) {
     p_folderName = FileUtils::generateUniqueFileName(notebookFolder, QString(), QString());
   } else if (FileUtils::childExistsCaseInsensitive(notebookFolder, p_folderName)) {

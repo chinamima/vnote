@@ -28,6 +28,11 @@ QSharedPointer<File> VXNode::getContentFile() {
 }
 
 QStringList VXNode::addAttachment(const QString &p_destFolderPath, const QStringList &p_files) {
+  if (getAttachmentFolder().isEmpty()) {
+    setAttachmentFolder(QStringLiteral("."));
+    save();
+  }
+
   Q_ASSERT(PathUtils::pathContains(fetchAttachmentFolderPath(), p_destFolderPath));
 
   auto backend = getBackend();
@@ -48,6 +53,11 @@ QStringList VXNode::addAttachment(const QString &p_destFolderPath, const QString
 }
 
 QString VXNode::newAttachmentFile(const QString &p_destFolderPath, const QString &p_name) {
+  if (getAttachmentFolder().isEmpty()) {
+    setAttachmentFolder(QStringLiteral("."));
+    save();
+  }
+
   Q_ASSERT(PathUtils::pathContains(fetchAttachmentFolderPath(), p_destFolderPath));
 
   auto backend = getBackend();
@@ -58,6 +68,11 @@ QString VXNode::newAttachmentFile(const QString &p_destFolderPath, const QString
 }
 
 QString VXNode::newAttachmentFolder(const QString &p_destFolderPath, const QString &p_name) {
+  if (getAttachmentFolder().isEmpty()) {
+    setAttachmentFolder(QStringLiteral("."));
+    save();
+  }
+
   Q_ASSERT(PathUtils::pathContains(fetchAttachmentFolderPath(), p_destFolderPath));
 
   auto backend = getBackend();

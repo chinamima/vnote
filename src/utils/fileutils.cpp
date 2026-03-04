@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QMimeDatabase>
+#include <QStringList>
 #include <QTemporaryFile>
 
 #include <core/exception.h>
@@ -14,6 +15,34 @@
 #include <QRandomGenerator>
 
 using namespace vnotex;
+
+static QString fetchDirStateForLog(const QString &p_dirPath) {
+  QFileInfo info(p_dirPath);
+  if (!info.exists()) {
+    return QStringLiteral("exists=false");
+  }
+
+  if (!info.isDir()) {
+    return QStringLiteral("exists=true,isDir=false");
+  }
+
+  QDir dir(p_dirPath);
+  const auto entries =
+      dir.entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+                    QDir::Name);
+
+  QStringList sampleEntries;
+  static const int c_sampleSize = 8;
+  for (int i = 0; i < entries.size() && i < c_sampleSize; ++i) {
+    sampleEntries << entries[i];
+  }
+  if (entries.size() > c_sampleSize) {
+    sampleEntries << QStringLiteral("...");
+  }
+
+  return QStringLiteral("exists=true,isDir=true,entryCount=%1,entries=[%2]")
+      .arg(QString::number(entries.size()), sampleEntries.join(QStringLiteral(", ")));
+}
 
 QByteArray FileUtils::readFile(const QString &p_filePath) {
   QFile file(p_filePath);
@@ -197,19 +226,36 @@ void FileUtils::removeFile(const QString &p_filePath) {
   QFile file(p_filePath);
   if (!file.remove()) {
     Exception::throwOne(Exception::Type::FailToRemoveFile,
-                        QStringLiteral("failed to remove file: %1").arg(p_filePath));
+                        QStringLiteral("failed to remove file: %1 (reason: %2, exists: %3)")
+                            .arg(p_filePath, file.errorString(),
+                                 QFileInfo::exists(p_filePath) ? QStringLiteral("true")
+                                                               : QStringLiteral("false")));
   }
 }
 
 bool FileUtils::removeDirIfEmpty(const QString &p_dirPath) {
   QDir dir(p_dirPath);
-  if (!dir.isEmpty()) {
+  const auto allEntries =
+      dir.entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+                    QDir::Name);
+  if (!allEntries.isEmpty()) {
     return false;
   }
 
   if (!dir.rmdir(p_dirPath)) {
+    // Handle race condition: new files may appear after the emptiness check.
+    const auto entriesAfterRemove =
+        dir.entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+                      QDir::Name);
+    if (!entriesAfterRemove.isEmpty()) {
+      qWarning() << "failed to remove empty dir due to concurrent new entries" << p_dirPath
+                 << "entries" << entriesAfterRemove;
+      return false;
+    }
+
     Exception::throwOne(Exception::Type::FailToRemoveFile,
-                        QStringLiteral("failed to remove directory: %1").arg(p_dirPath));
+                        QStringLiteral("failed to remove directory: %1 (%2)")
+                            .arg(p_dirPath, fetchDirStateForLog(p_dirPath)));
     return false;
   }
 
@@ -223,7 +269,8 @@ void FileUtils::removeDir(const QString &p_dirPath) {
   if (!dir.removeRecursively()) {
     Exception::throwOne(
         Exception::Type::FailToRemoveFile,
-        QStringLiteral("failed to remove directory recursively: %1").arg(p_dirPath));
+        QStringLiteral("failed to remove directory recursively: %1 (%2)")
+            .arg(p_dirPath, fetchDirStateForLog(p_dirPath)));
   }
 }
 
